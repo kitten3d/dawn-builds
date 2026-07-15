@@ -1,0 +1,161 @@
+name: build-dawn
+
+# Artifact factory (registry plan, Piece A): builds a Wayland+X11-enabled
+# static Dawn on ubuntu-latest and publishes it as a GitHub release asset with
+# a byte-stable name and a printed sha256. The wrapper module (module/) and the
+# registry point their Linux URL at the asset this workflow uploads.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dawn_tag:
+        description: "Upstream Dawn release tag (e.g. v20260214.164635)"
+        required: true
+      dawn_commit:
+        description: "Full Dawn commit sha for this release"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest  # load-bearing: matches upstream + gpu CI's gcc/glibc baseline
+    timeout-minutes: 180
+    env:
+      DAWN_TAG: ${{ github.event.inputs.dawn_tag }}
+      DAWN_COMMIT: ${{ github.event.inputs.dawn_commit }}
+    steps:
+      - name: Free up disk space
+        # ubuntu-latest runners ship ~14 GB free; the Dawn checkout + fetched
+        # deps + Release objects can crowd that. Drop toolchains we never use.
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+
+      - name: Clone and checkout Dawn
+        run: |
+          git clone https://dawn.googlesource.com/dawn
+          cd dawn
+          git checkout "${DAWN_COMMIT}"
+
+      - name: Configure, build, and install Dawn
+        # Recipe copied verbatim from plans/bazel-registry-plan.md Piece A.
+        working-directory: dawn
+        run: |
+          cmake -S . -B out/wayland -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DDAWN_FETCH_DEPENDENCIES=ON -DDAWN_ENABLE_INSTALL=ON \
+            -DDAWN_BUILD_MONOLITHIC_LIBRARY=STATIC \
+            -DDAWN_USE_WAYLAND=ON -DDAWN_USE_X11=ON -DDAWN_ENABLE_VULKAN=ON \
+            -DDAWN_BUILD_SAMPLES=OFF -DDAWN_BUILD_TESTS=OFF \
+            -DTINT_BUILD_TESTS=OFF -DTINT_BUILD_CMD_TOOLS=OFF \
+            -DCMAKE_INSTALL_PREFIX=install
+          cmake --build out/wayland --target webgpu_dawn -j
+          cmake --install out/wayland
+
+      - name: Stage install tree into the upstream layout
+        # Prefix + layout must match upstream exactly: the consumer stripPrefix
+        # and dawn.BUILD's cc_import select() both key on lib64/ for Linux.
+        run: |
+          PREFIX="Dawn-${DAWN_COMMIT}-ubuntu-latest-Release"
+          echo "PREFIX=${PREFIX}" >> "$GITHUB_ENV"
+          rm -rf "${PREFIX}"
+          mkdir -p "${PREFIX}"
+          cp -a dawn/install/include "${PREFIX}/include"
+          # Upstream ships the lib in lib64/ on Linux; cmake --install may emit
+          # lib/ depending on GNUInstallDirs — normalize to lib64/.
+          if [ -f dawn/install/lib64/libwebgpu_dawn.a ]; then
+            cp -a dawn/install/lib64 "${PREFIX}/lib64"
+          elif [ -f dawn/install/lib/libwebgpu_dawn.a ]; then
+            mkdir -p "${PREFIX}/lib64"
+            cp -a dawn/install/lib/libwebgpu_dawn.a "${PREFIX}/lib64/libwebgpu_dawn.a"
+          else
+            echo "::error::libwebgpu_dawn.a not found under dawn/install/{lib64,lib}"
+            exit 1
+          fi
+
+      - name: Acceptance gate — Wayland + X11 surface symbols present
+        run: |
+          LIB="${PREFIX}/lib64/libwebgpu_dawn.a"
+          syms="$(nm -g "${LIB}" || true)"
+          for s in vkCreateWaylandSurfaceKHR vkCreateXlibSurfaceKHR; do
+            if ! echo "${syms}" | grep -q "${s}"; then
+              echo "::error::${LIB} is missing ${s}"
+              exit 1
+            fi
+          done
+          echo "Both Wayland and Xlib surface symbols present."
+
+      - name: Acceptance gate — library size sanity
+        run: |
+          LIB="${PREFIX}/lib64/libwebgpu_dawn.a"
+          bytes="$(stat -c%s "${LIB}")"
+          echo "libwebgpu_dawn.a = ${bytes} bytes"
+          if [ "${bytes}" -lt 20971520 ]; then
+            echo "::error::${LIB} is ${bytes} bytes, under the 20 MB floor"
+            exit 1
+          fi
+
+      - name: Package tarball
+        run: |
+          tar -czf "${PREFIX}.tar.gz" "${PREFIX}"
+
+      - name: Acceptance gate — tarball prefix
+        run: |
+          bad="$(tar tf "${PREFIX}.tar.gz" | grep -v "^${PREFIX}/" || true)"
+          if [ -n "${bad}" ]; then
+            echo "::error::entries outside ${PREFIX}/ prefix:"
+            echo "${bad}"
+            exit 1
+          fi
+          echo "All entries under ${PREFIX}/."
+
+      - name: Compute and report sha256
+        run: |
+          SHA="$(sha256sum "${PREFIX}.tar.gz" | awk '{print $1}')"
+          echo "DAWN_SHA256=${SHA}" >> "$GITHUB_ENV"
+          echo "=================================================================="
+          echo " ${PREFIX}.tar.gz"
+          echo " sha256: ${SHA}"
+          echo "=================================================================="
+          {
+            echo "## Dawn build artifact"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| tag | \`${DAWN_TAG}\` |"
+            echo "| commit | \`${DAWN_COMMIT}\` |"
+            echo "| asset | \`${PREFIX}.tar.gz\` |"
+            echo "| sha256 | \`${SHA}\` |"
+            echo ""
+            echo "Put this sha256 into \`module/extensions.bzl\` (LINUX_SHA256)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish release and upload asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No checkout of this repo happens above, so gh has no git context —
+          # pin the target repo explicitly.
+          GH_REPO: ${{ github.repository }}
+        run: |
+          NOTES="Wayland+X11-enabled static Dawn for Linux.
+
+          - Dawn commit: \`${DAWN_COMMIT}\`
+          - Asset: \`${PREFIX}.tar.gz\`
+          - sha256: \`${DAWN_SHA256}\`
+
+          Set \`LINUX_SHA256\` in \`module/extensions.bzl\` to the sha256 above."
+          if gh release view "${DAWN_TAG}" >/dev/null 2>&1; then
+            gh release edit "${DAWN_TAG}" --notes "${NOTES}"
+          else
+            gh release create "${DAWN_TAG}" --title "${DAWN_TAG}" --notes "${NOTES}"
+          fi
+          gh release upload "${DAWN_TAG}" "${PREFIX}.tar.gz" --clobber

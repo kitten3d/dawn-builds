@@ -1,0 +1,13 @@
+module(
+    name = "dawn",
+    version = "20260214.164635",
+)
+
+bazel_dep(name = "rules_cc", version = "0.2.16")
+bazel_dep(name = "platforms", version = "1.0.0")
+
+# The extension fetches the right per-platform prebuilt Dawn at repo-fetch time
+# and exposes it as @dawn_bin. //:dawn aliases @dawn_bin//:dawn, so consumers
+# keep the historical @dawn label.
+dawn_binaries = use_extension("//:extensions.bzl", "dawn_binaries")
+use_repo(dawn_binaries, "dawn_bin")

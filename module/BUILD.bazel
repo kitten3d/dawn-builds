@@ -1,0 +1,6 @@
+# Preserve the historical @dawn label: @dawn//:dawn -> @dawn_bin//:dawn.
+alias(
+    name = "dawn",
+    actual = "@dawn_bin//:dawn",
+    visibility = ["//visibility:public"],
+)
