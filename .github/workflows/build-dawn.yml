@@ -82,17 +82,19 @@ jobs:
             exit 1
           fi
 
-      - name: Acceptance gate — Wayland + X11 surface symbols present
+      - name: Acceptance gate — Wayland + X11 surface support present
+        # Dawn resolves these entry points dynamically via vkGetInstanceProcAddr,
+        # so they appear as string literals, not linker symbols — check with
+        # strings, not nm (verified against the known-good local build).
         run: |
           LIB="${PREFIX}/lib64/libwebgpu_dawn.a"
-          syms="$(nm -g "${LIB}" || true)"
           for s in vkCreateWaylandSurfaceKHR vkCreateXlibSurfaceKHR; do
-            if ! echo "${syms}" | grep -q "${s}"; then
+            if ! strings "${LIB}" | grep -qx "${s}"; then
               echo "::error::${LIB} is missing ${s}"
               exit 1
             fi
           done
-          echo "Both Wayland and Xlib surface symbols present."
+          echo "Both Wayland and Xlib surface entry points present."
 
       - name: Acceptance gate — library size sanity
         run: |
