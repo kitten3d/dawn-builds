@@ -29,10 +29,9 @@ _SUFFIXES = {
 
 # ─── sha256 checksums, keyed by platform ─────────────────────────────────────
 # macOS/Windows: upstream google/dawn release shas (unchanged).
-# Linux: sha256 of OUR kitten3d/dawn-builds asset — UNKNOWN until the
-# build-dawn workflow runs. Replace the sentinel below with the sha256 the
-# workflow prints (job log / step summary) before this module can be used.
-LINUX_SHA256 = "FILL_ME_FROM_CI_RUN"
+# Linux: sha256 of OUR kitten3d/dawn-builds release asset, as printed by the
+# build-dawn workflow run that published it.
+LINUX_SHA256 = "e0375c6d396a80edd3f5dea2e41aa8d03dad6d6607db12a03d01847688591712"
 
 _SHA256S = {
     "macos_arm64": "536c7ae9e2e679224797880afe6a3a6ba072e6986d5bc9b7cce18c2d730aa578",
