@@ -1,10 +1,5 @@
 name: build-dawn
 
-# Artifact factory (registry plan, Piece A): builds a Wayland+X11-enabled
-# static Dawn on ubuntu-latest and publishes it as a GitHub release asset with
-# a byte-stable name and a printed sha256. The wrapper module (module/) and the
-# registry point their Linux URL at the asset this workflow uploads.
-
 on:
   workflow_dispatch:
     inputs:
@@ -27,8 +22,7 @@ jobs:
       DAWN_COMMIT: ${{ github.event.inputs.dawn_commit }}
     steps:
       - name: Free up disk space
-        # ubuntu-latest runners ship ~14 GB free; the Dawn checkout + fetched
-        # deps + Release objects can crowd that. Drop toolchains we never use.
+        # runners ship ~14 GB free; the checkout + deps + Release objects crowd it
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
           df -h /
@@ -48,7 +42,6 @@ jobs:
           git checkout "${DAWN_COMMIT}"
 
       - name: Configure, build, and install Dawn
-        # Recipe copied verbatim from plans/bazel-registry-plan.md Piece A.
         working-directory: dawn
         run: |
           cmake -S . -B out/wayland -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -62,16 +55,13 @@ jobs:
           cmake --install out/wayland
 
       - name: Stage install tree into the upstream layout
-        # Prefix + layout must match upstream exactly: the consumer stripPrefix
-        # and dawn.BUILD's cc_import select() both key on lib64/ for Linux.
+        # the consumer stripPrefix and cc_import select() key on this exact layout
         run: |
           PREFIX="Dawn-${DAWN_COMMIT}-ubuntu-latest-Release"
           echo "PREFIX=${PREFIX}" >> "$GITHUB_ENV"
           rm -rf "${PREFIX}"
           mkdir -p "${PREFIX}"
           cp -a dawn/install/include "${PREFIX}/include"
-          # Upstream ships the lib in lib64/ on Linux; cmake --install may emit
-          # lib/ depending on GNUInstallDirs — normalize to lib64/.
           if [ -f dawn/install/lib64/libwebgpu_dawn.a ]; then
             cp -a dawn/install/lib64 "${PREFIX}/lib64"
           elif [ -f dawn/install/lib/libwebgpu_dawn.a ]; then
@@ -83,9 +73,8 @@ jobs:
           fi
 
       - name: Acceptance gate — Wayland + X11 surface support present
-        # Dawn resolves these entry points dynamically via vkGetInstanceProcAddr,
-        # so they appear as string literals, not linker symbols — check with
-        # strings, not nm (verified against the known-good local build).
+        # entry points resolve via vkGetInstanceProcAddr: string literals, not
+        # linker symbols — strings, not nm
         run: |
           LIB="${PREFIX}/lib64/libwebgpu_dawn.a"
           for s in vkCreateWaylandSurfaceKHR vkCreateXlibSurfaceKHR; do
@@ -144,8 +133,7 @@ jobs:
       - name: Publish release and upload asset
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # No checkout of this repo happens above, so gh has no git context —
-          # pin the target repo explicitly.
+          # no checkout above, so gh has no git context
           GH_REPO: ${{ github.repository }}
         run: |
           NOTES="Wayland+X11-enabled static Dawn for Linux.

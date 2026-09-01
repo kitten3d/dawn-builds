@@ -1,22 +1,14 @@
 """Platform-aware downloader for pre-built Dawn WebGPU binaries.
 
-Ports the old third_party/dawn_prebuilt.bzl logic into a module extension: the
-same ctx.os -> platform key, suffix map, and download_and_extract with
-stripPrefix. This is the single source of truth for the Dawn version pin, all
-four per-platform URLs, and all four sha256s — the values the old design
-duplicated across gpu and debug.
-
-macOS and Windows binaries still come from Dawn's official google/dawn nightly
-releases (X11/Metal/D3D — unchanged). The Linux binary comes from our own
-kitten3d/dawn-builds release, which is built with DAWN_USE_WAYLAND=ON so a
-native wl_surface passes Dawn validation.
+Single source of truth for the Dawn version pin, the four per-platform URLs,
+and the four sha256s. macOS/Windows binaries come from upstream google/dawn
+releases; Linux comes from our own kitten3d/dawn-builds release (built with
+DAWN_USE_WAYLAND=ON so a native wl_surface passes Dawn validation).
 """
 
-# ─── Dawn version pin (bump this block for a new Dawn version) ────────────────
 DAWN_TAG = "v20260214.164635"
 DAWN_COMMIT = "1a3afc99a7ef7dacaab73b71d44575c4f1bf2dd7"
 
-# ─── URL bases ───────────────────────────────────────────────────────────────
 _UPSTREAM_BASE = "https://github.com/google/dawn/releases/download"
 _LINUX_BASE = "https://github.com/kitten3d/dawn-builds/releases/download"
 
@@ -27,10 +19,6 @@ _SUFFIXES = {
     "windows": "windows-latest-Release",
 }
 
-# ─── sha256 checksums, keyed by platform ─────────────────────────────────────
-# macOS/Windows: upstream google/dawn release shas (unchanged).
-# Linux: sha256 of OUR kitten3d/dawn-builds release asset, as printed by the
-# build-dawn workflow run that published it.
 LINUX_SHA256 = "e0375c6d396a80edd3f5dea2e41aa8d03dad6d6607db12a03d01847688591712"
 
 _SHA256S = {
