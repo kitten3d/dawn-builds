@@ -15,11 +15,20 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest  # load-bearing: matches upstream + gpu CI's gcc/glibc baseline
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            suffix: linux-x86_64-Release
+          - os: ubuntu-24.04-arm
+            suffix: linux-arm64-Release
+    # 24.04's gcc/glibc is the engine CI baseline; the arm runner has no -latest alias
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 180
     env:
-      DAWN_TAG: ${{ github.event.inputs.dawn_tag }}
       DAWN_COMMIT: ${{ github.event.inputs.dawn_commit }}
+      SUFFIX: ${{ matrix.suffix }}
     steps:
       - name: Free up disk space
         # runners ship ~14 GB free; the checkout + deps + Release objects crowd it
@@ -57,7 +66,7 @@ jobs:
       - name: Stage install tree into the upstream layout
         # the consumer stripPrefix and cc_import select() key on this exact layout
         run: |
-          PREFIX="Dawn-${DAWN_COMMIT}-ubuntu-latest-Release"
+          PREFIX="Dawn-${DAWN_COMMIT}-${SUFFIX}"
           echo "PREFIX=${PREFIX}" >> "$GITHUB_ENV"
           rm -rf "${PREFIX}"
           mkdir -p "${PREFIX}"
@@ -109,43 +118,59 @@ jobs:
           fi
           echo "All entries under ${PREFIX}/."
 
-      - name: Compute and report sha256
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PREFIX }}
+          path: ${{ env.PREFIX }}.tar.gz
+
+  # single job avoids the create-release race a per-matrix publish would have
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    env:
+      DAWN_TAG: ${{ github.event.inputs.dawn_tag }}
+      DAWN_COMMIT: ${{ github.event.inputs.dawn_commit }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # no checkout, so gh has no git context
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Compute and report sha256s
         run: |
-          SHA="$(sha256sum "${PREFIX}.tar.gz" | awk '{print $1}')"
-          echo "DAWN_SHA256=${SHA}" >> "$GITHUB_ENV"
-          echo "=================================================================="
-          echo " ${PREFIX}.tar.gz"
-          echo " sha256: ${SHA}"
-          echo "=================================================================="
+          sha256sum Dawn-*.tar.gz | tee shas.txt
           {
-            echo "## Dawn build artifact"
+            echo "## Dawn build artifacts"
             echo ""
             echo "| field | value |"
             echo "| --- | --- |"
             echo "| tag | \`${DAWN_TAG}\` |"
             echo "| commit | \`${DAWN_COMMIT}\` |"
-            echo "| asset | \`${PREFIX}.tar.gz\` |"
-            echo "| sha256 | \`${SHA}\` |"
+            while read -r sha file; do
+              echo "| \`${file}\` | \`${sha}\` |"
+            done < shas.txt
             echo ""
-            echo "Put this sha256 into \`module/extensions.bzl\` (LINUX_SHA256)."
+            echo "Put these sha256s into \`module/extensions.bzl\` (_SHA256S, linux_* keys)."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish release and upload asset
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # no checkout above, so gh has no git context
-          GH_REPO: ${{ github.repository }}
+      - name: Publish release and upload assets
         run: |
-          NOTES="Wayland+X11-enabled static Dawn for Linux.
+          NOTES="Wayland+X11-enabled static Dawn for Linux (x86-64 and arm64).
 
           - Dawn commit: \`${DAWN_COMMIT}\`
-          - Asset: \`${PREFIX}.tar.gz\`
-          - sha256: \`${DAWN_SHA256}\`
+          - sha256s:
+          \`\`\`
+          $(cat shas.txt)
+          \`\`\`
 
-          Set \`LINUX_SHA256\` in \`module/extensions.bzl\` to the sha256 above."
+          Set the \`linux_*\` entries of \`_SHA256S\` in \`module/extensions.bzl\` to the values above."
           if gh release view "${DAWN_TAG}" >/dev/null 2>&1; then
             gh release edit "${DAWN_TAG}" --notes "${NOTES}"
           else
             gh release create "${DAWN_TAG}" --title "${DAWN_TAG}" --notes "${NOTES}"
           fi
-          gh release upload "${DAWN_TAG}" "${PREFIX}.tar.gz" --clobber
+          gh release upload "${DAWN_TAG}" Dawn-*.tar.gz --clobber
