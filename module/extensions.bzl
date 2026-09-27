@@ -22,8 +22,8 @@ _SUFFIXES = {
 }
 
 _SHA256S = {
-    "linux_x86_64": "",
-    "linux_arm64": "",
+    "linux_x86_64": "481e391ff511c4c2f2857f08bddbef0a8678403ddfa972a58119c5a3fb5be43c",
+    "linux_arm64": "ce10cae95156b25f32961d7ca8327d25d2bba263a926eced89d08e3221de59f2",
     "macos_arm64": "536c7ae9e2e679224797880afe6a3a6ba072e6986d5bc9b7cce18c2d730aa578",
     "macos_x86_64": "50439db37abd602ad7f46342b3200d11eaa955e6482c43d7daad72735cfd608a",
     "windows_x86_64": "3abbab979ea196c0cc9e171be30a8c14850257ab77fd8e38a1a9473727bf5319",
